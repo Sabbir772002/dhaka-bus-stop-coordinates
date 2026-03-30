@@ -735,7 +735,7 @@ function setAddCoordMode(on) {
         showToast('Select a stoppage first', true);
         return;
     }
-    addMode = on;
+    addCoordMode = on;
     const btn = document.getElementById('btnAddCoord');
     btn.textContent = on ? 'Cancel Add Coord' : 'Add Coordinate';
     btn.classList.toggle('on', on);
