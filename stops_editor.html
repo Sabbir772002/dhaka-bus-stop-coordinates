@@ -58,6 +58,14 @@
         }
         .stop-item:hover { background: #efefef; }
         .stop-item.selected { background: #667eea; color: white; border-left-color: #764ba2; }
+        .stop-item.new-stop { background: #e8f5e9; border-left-color: #4caf50; }
+        .stop-item.new-stop:hover { background: #d4edda; }
+        .stop-item.new-stop.selected { background: #4caf50; border-left-color: #2e7d32; }
+        .new-badge {
+            background: #4caf50; color: white; font-size: 10px;
+            padding: 2px 6px; border-radius: 3px; margin-left: 4px;
+            font-weight: 700;
+        }
         .stop-name { font-weight: 600; font-size: 13px; }
         .stop-coord { font-size: 11px; opacity: 0.7; font-family: monospace; }
 
@@ -374,7 +382,13 @@ function displayStops(filterText = '') {
     const c = document.getElementById('stopsListContainer');
     c.innerHTML = '';
     
-    const filtered = stopsData.filter(stop => 
+    // Combine existing and new stops for display
+    const allStops = [
+        ...stopsData.map(s => ({...s, isNew: false, index: stopsData.indexOf(s)})),
+        ...newStops.map(s => ({...s, isNew: true, index: stopsData.length + newStops.indexOf(s)}))
+    ];
+    
+    const filtered = allStops.filter(stop => 
         filterText === '' || stop.names[0].toLowerCase().includes(filterText.toLowerCase())
     );
     
@@ -383,13 +397,15 @@ function displayStops(filterText = '') {
         return;
     }
     
-    filtered.forEach((stop, displayIdx) => {
-        const actualIdx = stopsData.indexOf(stop);
+    filtered.forEach((stop) => {
         const el = document.createElement('div');
-        el.className = 'stop-item' + (actualIdx === selectedStopIdx ? ' selected' : '');
-        el.innerHTML = `<div class="stop-name">${stop.names[0]}</div>
+        const isSelected = (stop.isNew ? stopsData.length + newStops.indexOf(stop) : stopsData.indexOf(stop)) === selectedStopIdx;
+        el.className = 'stop-item' + (isSelected ? ' selected' : '') + (stop.isNew ? ' new-stop' : '');
+        el.dataset.stopIndex = stop.index;  // Store the actual index as data attribute
+        const badge = stop.isNew ? ' <span class="new-badge">NEW</span>' : '';
+        el.innerHTML = `<div class="stop-name">${stop.names[0]}${badge}</div>
             <div class="stop-coord">${stop.coordinates[0][0].toFixed(6)}, ${stop.coordinates[0][1].toFixed(6)}</div>`;
-        el.addEventListener('click', () => selectStop(actualIdx));
+        el.addEventListener('click', () => selectStop(stop.index));
         c.appendChild(el);
     });
 }
@@ -399,14 +415,35 @@ function displayStops(filterText = '') {
 // ═══════════════════════════════════════════════════════════
 function selectStop(index) {
     selectedStopIdx = index;
-    document.querySelectorAll('.stop-item').forEach((el, i) => el.classList.toggle('selected', i === index));
+    
+    // Update list selection - use data attribute to identify correct stop
+    document.querySelectorAll('.stop-item').forEach((el) => {
+        const stopIndex = parseInt(el.dataset.stopIndex || -1);
+        el.classList.toggle('selected', stopIndex === index);
+    });
+    
     document.getElementById('btnAddCoord').disabled = !(editMode && selectedStopIdx >= 0);
     
-    // Show coordinates panel
+    // Determine if it's an existing stop or a new stop
+    let stop = null;
+    let stopIdx = index;
+    
     if (index >= 0 && index < stopsData.length) {
-        const stop = stopsData[index];
-        document.getElementById('coordsPanelStopName').textContent = stop.names[0];
-        displayCoordinatesPanel(stop, index);
+        stop = stopsData[index];
+    } else if (index >= stopsData.length && index < stopsData.length + newStops.length) {
+        const newIdx = index - stopsData.length;
+        stop = newStops[newIdx];
+    }
+    
+    // Show coordinates panel
+    if (stop) {
+        const stopNameEl = document.getElementById('coordsPanelStopName');
+        if (index >= stopsData.length) {
+            stopNameEl.innerHTML = stop.names[0] + ' <span style="color:#4caf50;font-weight:700;font-size:11px;margin-left:4px;">(NEW)</span>';
+        } else {
+            stopNameEl.textContent = stop.names[0];
+        }
+        displayCoordinatesPanel(stop, stopIdx);
         document.getElementById('coordsPanel').style.display = 'block';
     } else {
         document.getElementById('coordsPanel').style.display = 'none';
@@ -714,17 +751,30 @@ function setAddCoordMode(on) {
 function addNewStop(lat, lng) {
     const name = prompt('Enter stop name:', 'New Stop');
     if (!name) return;
+    
+    // Assign proper ID based on total existing elements + 1
+    const maxId = stopsData.reduce((max, stop) => Math.max(max, stop.id || 0), 0);
+    const newId = maxId + 1;
+    
     const newStop = {
-        id: Date.now(), // temporary id
+        id: newId,
         names: [name],
         coordinates: [[parseFloat(lat), parseFloat(lng)]]
     };
     newStops.push(newStop);
-    addNewStopMarker(newStop, stopsData.length + newStops.length - 1, 0, [lat, lng], '#1db954');
+    
+    // Calculate visual index for marker color
+    const visualIdx = stopsData.length + newStops.length - 1;
+    const color = COLORS[visualIdx % COLORS.length];
+    
+    // Add marker
+    addNewStopMarker(newStop, visualIdx, 0, [lat, lng], color);
+    
     markDirty();
     updateStats();
-    displayStops(); // refresh list
-    showToast('✅ New stop added');
+    displayStops(); // refresh list to show new stop
+    selectStop(stopsData.length + newStops.length - 1); // highlight new stop
+    showToast('✅ New stop added: ' + name);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -780,6 +830,7 @@ function updateStats() {
 // ═══════════════════════════════════════════════════════════
 function buildUpdatedJSON() {
     const out = JSON.parse(JSON.stringify(stopsData));
+    
     // Update moved coordinates and handle deletions
     out.forEach(stop => {
         const newCoords = [];
@@ -790,14 +841,16 @@ function buildUpdatedJSON() {
         });
         stop.coordinates = newCoords;
     });
-    // Add new stops
+    
+    // Add new stops - they already have proper IDs assigned in addNewStop()
     newStops.forEach(stop => {
         out.push({
-            id: out.length + 1, // assign proper id
+            id: stop.id,  // Use the ID already assigned
             names: stop.names,
             coordinates: stop.coordinates
         });
     });
+    
     return out;
 }
 
@@ -925,6 +978,37 @@ document.getElementById('coordAddBtn').addEventListener('click', function() {
         updateStats();
         
         // Only refresh panel, not all markers
+        displayCoordinatesPanel(stop, selectedStopIdx);
+        showToast(`✅ Added coordinate to ${stop.names[0]}`);
+    } else if (selectedStopIdx >= stopsData.length && selectedStopIdx < stopsData.length + newStops.length) {
+        // Add coordinate to new stoppage
+        const newIdx = selectedStopIdx - stopsData.length;
+        const stop = newStops[newIdx];
+        
+        // Check for duplicates
+        const isDuplicate = stop.coordinates.some(coord => 
+            Math.abs(coord[0] - lat) < 0.000001 && Math.abs(coord[1] - lng) < 0.000001
+        );
+        
+        if (isDuplicate) {
+            showToast(`⚠️ Coordinate already exists for ${stop.names[0]}`, true);
+            document.getElementById('coordBadge').classList.remove('show');
+            setAddCoordMode(false);
+            return;
+        }
+        
+        const newCoord = [lat, lng];
+        stop.coordinates.push(newCoord);
+        const coordIdx = stop.coordinates.length - 1;
+        const color = COLORS[selectedStopIdx % COLORS.length];
+        
+        // Add marker for new stop
+        addNewStopMarker(stop, selectedStopIdx, coordIdx, newCoord, color);
+        
+        markDirty();
+        updateStats();
+        
+        //Refresh panel
         displayCoordinatesPanel(stop, selectedStopIdx);
         showToast(`✅ Added coordinate to ${stop.names[0]}`);
     } else {
