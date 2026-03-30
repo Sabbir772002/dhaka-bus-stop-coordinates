@@ -227,6 +227,13 @@ async def ws_handler(ws):
         ws_clients.discard(ws)
         print(f"🔌 Browser disconnected {addr[0]}:{addr[1]}  [{len(ws_clients)} remaining]")
 
+async def broadcast(msg):
+    if ws_clients:
+        await asyncio.gather(
+            *[c.send(msg) for c in list(ws_clients)],
+            return_exceptions=True
+        )
+
 async def watch_loop():
     while True:
         await asyncio.sleep(1)
