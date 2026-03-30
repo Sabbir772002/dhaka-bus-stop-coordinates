@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stoppages Editor</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 16px;
+            height: calc(100vh - 40px);
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .sidebar h2 { color: #333; margin-bottom: 16px; font-size: 18px; text-align: center; }
+        .stats { margin-bottom: 16px; }
+        .stats div { font-size: 14px; margin-bottom: 4px; }
+        .stops-list { flex: 1; overflow-y: auto; }
+        
+        /* ── Search input ── */
+        #searchStops {
+            transition: all 0.2s;
+        }
+        #searchStops:focus {
+            outline: none;
+            border-color: #667eea !important;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .stop-item {
+            padding: 8px 10px; margin-bottom: 4px;
+            background: #f5f5f5; border-left: 4px solid #ddd;
+            border-radius: 6px; cursor: pointer;
+            transition: all 0.25s;
+        }
+        .stop-item:hover { background: #efefef; }
+        .stop-item.selected { background: #667eea; color: white; border-left-color: #764ba2; }
+        .stop-name { font-weight: 600; font-size: 13px; }
+        .stop-coord { font-size: 11px; opacity: 0.7; font-family: monospace; }
+
+        /* ── Selected Stop Coordinates Panel ── */
+        .coord-item {
+            background: #f9f9f9; border: 1px solid #e0e0e0;
+            padding: 8px; margin-bottom: 6px; border-radius: 5px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 11px; font-family: monospace; color: #444;
+        }
+        .coord-item.active {
+            background: #e8f5e9; border-color: #4caf50;
+        }
+        .coord-value { flex: 1; margin-right: 6px; }
+        .coord-actions {
+            display: flex; gap: 4px; flex-shrink: 0;
+        }
+        .coord-btn {
+            padding: 3px 6px; border: none; border-radius: 3px;
+            font-size: 10px; font-weight: 600; cursor: pointer;
+            transition: all 0.15s; white-space: nowrap;
+        }
+        .coord-btn-view {
+            background: #667eea; color: white;
+        }
+        .coord-btn-view:hover {
+            background: #5a6fd6;
+        }
+        .coord-btn-delete {
+            background: #f44336; color: white;
+        }
+        .coord-btn-delete:hover {
+            background: #d32f2f;
+        }
+        .coord-btn-promote {
+            background: #FF9800; color: white;
+        }
+        .coord-btn-promote:hover {
+            background: #e68900;
+        }
+
+        /* ── Map column ── */
+        .map-container {
+            background: white; border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden; display: flex; flex-direction: column;
+        }
+
+        /* ── Edit toolbar ── */
+        .edit-toolbar {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px; background: #f2f2f2;
+            border-bottom: 1px solid #ddd; flex-shrink: 0;
+            flex-wrap: wrap;
+        }
+        .toolbar-label { font-size: 12px; font-weight: 700; color: #555; white-space: nowrap; }
+        .btn {
+            padding: 5px 13px; border-radius: 7px; border: none;
+            cursor: pointer; font-size: 12px; font-weight: 600;
+            transition: all 0.18s; white-space: nowrap;
+        }
+        .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+        .btn-edit  { background: #667eea; color: #fff; }
+        .btn-edit:hover:not(:disabled)  { background: #5a6fd6; }
+        .btn-edit.on { background: #e74c3c; }
+        .btn-edit.on:hover:not(:disabled) { background: #c0392b; }
+        .btn-add { background: #1db954; color: #fff; }
+        .btn-add:hover:not(:disabled) { background: #17a349; }
+        .btn-save  { background: #1db954; color: #fff; }
+        .btn-save:hover:not(:disabled)  { background: #17a349; }
+        .btn-dl    { background: #764ba2; color: #fff; }
+        .btn-dl:hover:not(:disabled)    { background: #5e3a84; }
+
+        .unsaved-dot {
+            width: 8px; height: 8px; background: #e74c3c;
+            border-radius: 50%; display: none; flex-shrink: 0;
+        }
+        .unsaved-dot.on { display: inline-block; }
+
+        /* ── Map wrapper ── */
+        .map-wrapper { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        #map { flex: 1; min-height: 0; }
+        #map.edit-on { cursor: crosshair !important; }
+
+        /* ── Click coord badge ── */
+        #coordBadge {
+            display: none; position: absolute;
+            bottom: 14px; left: 50%; transform: translateX(-50%);
+            background: rgba(18,18,36,0.93); color: #fff;
+            padding: 7px 14px; border-radius: 24px;
+            font-size: 12px; font-family: 'Courier New', monospace; font-weight: 600;
+            z-index: 1000; white-space: nowrap;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+            align-items: center; gap: 10px; pointer-events: auto;
+        }
+        #coordBadge.show { display: flex; }
+        .coord-lat { color: #a29bfe; }
+        .coord-lng { color: #74b9ff; }
+        .coord-copy {
+            background: rgba(255,255,255,0.14); border: none; color: #ccc;
+            border-radius: 5px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+        }
+        .coord-copy:hover { background: rgba(255,255,255,0.28); color: #fff; }
+        .coord-add { background: #1db954; border: none; color: #fff; border-radius: 5px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+        .coord-add:hover { background: #17a349; }
+
+        .click-pin { width:12px; height:12px; background:#ff6b6b; border:2px solid #fff; border-radius:50%; }
+
+        /* ── Toast ── */
+        #toast {
+            position: fixed; bottom: 30px; right: 30px;
+            background: #1db954; color: white;
+            padding: 11px 18px; border-radius: 10px; font-size: 13px; font-weight: 600;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3); z-index: 9999; display: none;
+            animation: slideUp 0.3s ease;
+        }
+        #toast.err { background: #e74c3c; }
+        @keyframes slideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+        .loading  { text-align:center; padding:30px 10px; color:#999; font-size:13px; }
+        .err-msg  { background:#ffebee; color:#c62828; padding:12px; border-radius:8px; margin-bottom:12px; border-left:4px solid #c62828; font-size:12px; }
+
+        @media (max-width:1100px) {
+            .container { grid-template-columns:1fr; height:auto; }
+            .sidebar { max-height:260px; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<div class="container">
+
+    <!-- Stops list -->
+    <div class="sidebar">
+        <h2>🗺️ Stoppages</h2>
+        <div class="stats">
+            <div id="totalStops">Total: —</div>
+            <div id="movedStops">Moved: 0</div>
+            <div id="newStops">New: 0</div>
+        </div>
+        
+        <!-- Search field -->
+        <div style="margin-bottom: 12px;">
+            <input type="text" id="searchStops" placeholder="🔍 Search stops..." style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 12px; box-sizing: border-box;">
+        </div>
+        
+        <div id="stopsListContainer" class="stops-list">
+            <div class="loading">⏳ Loading stops…</div>
+        </div>
+
+        <!-- Selected Stop Coordinates Panel -->
+        <div id="coordsPanel" style="display:none; border-top:2px solid #ddd; padding-top:12px; margin-top:12px; max-height:200px; overflow-y:auto;">
+            <h3 style="font-size:13px; font-weight:700; color:#333; margin-bottom:10px;">📍 Coordinates of <span id="coordsPanelStopName">—</span></h3>
+            <div id="coordsList" style="font-size:12px;">
+                <!-- Coordinates will be listed here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Map -->
+    <div class="map-container">
+
+        <div class="edit-toolbar">
+            <span class="toolbar-label">✏️ Edit Mode:</span>
+            <button class="btn btn-edit"  id="btnEdit"  disabled>Enable Edit</button>
+            <button class="btn btn-add" id="btnAdd" disabled>Add New Stop</button>
+            <button class="btn btn-add" id="btnAddCoord" disabled>Add Coordinate</button>
+            <span class="unsaved-dot" id="unsavedDot" title="Unsaved changes"></span>
+            <button class="btn btn-save"  id="btnSave"  disabled>💾 Save to Server</button>
+            <button class="btn btn-dl"    id="btnDl"    disabled>⬇ Download JSON</button>
+        </div>
+
+        <div class="map-wrapper">
+            <div id="map"></div>
+            <div id="coordBadge">
+                <span>📍</span>
+                <span class="coord-lat" id="coordLat">Lat: —</span>
+                <span class="coord-lng" id="coordLng">Lng: —</span>
+                <button class="coord-copy" id="coordCopyBtn">Copy</button>
+                <button class="coord-add" id="coordAddBtn" style="display:none;">Add Stop</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  Global state
+// ═══════════════════════════════════════════════════════════
+let map;
+let stopsData = [];        // array of {id, names, coordinates}
+let currentMarkers = [];   // L.marker per stop point
+let selectedStopIdx = -1;
+let editMode = false;
+let addMode = false;
+let addCoordMode = false;
+let movedCoords = {};      // stopId_coordIndex → [lat, lng]
+let newStops = [];         // array of {names: ['New Stop'], coordinates: [[lat,lng]]}
+let deletedCoords = new Set(); // stopId_coordIndex strings to delete
+
+const COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA502','#667eea','#764ba2','#e74c3c','#1db954','#9b59b6','#f39c12','#e67e22','#2ecc71','#3498db','#9b59b6','#34495e'];
+
+// ═══════════════════════════════════════════════════════════
+//  WebSocket
+// ═══════════════════════════════════════════════════════════
+const WS_URL = 'ws://localhost:8001';
+let ws = null, wsTimer = null;
+
+function connectWS() {
+    const el = document.getElementById('wsStatus');
+    if (el) el.textContent = 'CONNECTING'; if (el) el.className = 'connecting';
+    try { ws = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
+    ws.onopen  = () => { if (el) el.textContent = 'LIVE'; if (el) el.className = 'connected'; };
+    ws.onmessage = ev => {
+        const msg = JSON.parse(ev.data);
+        if      (msg.type === 'change')   { showToast(`✏️ ${msg.entry.file} changed — reloading…`); reloadData(); }
+        else if (msg.type === 'save_ok')  { showToast('✅ final_safe.json saved to server!'); markSaved(); }
+        else if (msg.type === 'save_err') { showToast('❌ Server save failed: ' + (msg.reason||'unknown'), true); }
+    };
+    ws.onclose = ws.onerror = () => { if (el) el.textContent = 'OFFLINE'; if (el) el.className = 'disconnected'; scheduleReconnect(); };
+}
+function scheduleReconnect() { clearTimeout(wsTimer); wsTimer = setTimeout(connectWS, 3000); }
+
+// ═══════════════════════════════════════════════════════════
+//  Toast
+// ═══════════════════════════════════════════════════════════
+let toastTimer = null;
+function showToast(msg, isErr=false) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = isErr ? 'err' : '';
+    t.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Map init
+// ═══════════════════════════════════════════════════════════
+function initMap() {
+    if (map) return;
+    map = L.map('map').setView([23.8103, 90.4125], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors', maxZoom: 19, minZoom: 5
+    }).addTo(map);
+
+    map.on('click', function(e) {
+        if (addMode || addCoordMode) {
+            const lat = e.latlng.lat.toFixed(6);
+            const lng = e.latlng.lng.toFixed(6);
+            document.getElementById('coordLat').textContent = 'Lat: ' + lat;
+            document.getElementById('coordLng').textContent = 'Lng: ' + lng;
+            document.getElementById('coordCopyBtn').dataset.value = `${lat}, ${lng}`;
+            
+            // Build button text with context
+            if (addCoordMode) {
+                if (selectedStopIdx >= 0 && selectedStopIdx < stopsData.length) {
+                    const stopName = stopsData[selectedStopIdx].names[0];
+                    document.getElementById('coordAddBtn').textContent = `✅ Add to ${stopName}`;
+                } else {
+                    document.getElementById('coordAddBtn').textContent = '⚠️ Select stop first';
+                    document.getElementById('coordAddBtn').disabled = true;
+                    document.getElementById('coordAddBtn').style.display = 'inline-block';
+                    document.getElementById('coordBadge').classList.add('show');
+                    return;
+                }
+            } else if (addMode) {
+                document.getElementById('coordAddBtn').textContent = '✅ Create New Stop';
+            }
+            
+            document.getElementById('coordAddBtn').disabled = false;
+            document.getElementById('coordAddBtn').style.display = 'inline-block';
+            document.getElementById('coordBadge').classList.add('show');
+        }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Data
+// ═══════════════════════════════════════════════════════════
+async function loadData() {
+    const bust = '?t=' + Date.now();
+    try {
+        const sr = await fetch('final_safe.json' + bust);
+        if (!sr.ok) throw new Error('HTTP ' + sr.status);
+        stopsData = await sr.json();
+        displayStops();
+        renderAllMarkers(true);  // fitBounds=true on initial load
+        updateStats();
+        return true;
+    } catch(err) {
+        document.getElementById('stopsListContainer').innerHTML =
+            `<div class="err-msg"><strong>Error loading data:</strong><br>${err.message}</div>`;
+        return false;
+    }
+}
+
+async function reloadData() {
+    const ok = await loadData();
+    if (ok) {
+        // Re-select if possible
+        if (selectedStopIdx >= 0 && selectedStopIdx < stopsData.length) {
+            selectStop(selectedStopIdx);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Stops list
+// ═══════════════════════════════════════════════════════════
+function displayStops(filterText = '') {
+    const c = document.getElementById('stopsListContainer');
+    c.innerHTML = '';
+    
+    const filtered = stopsData.filter(stop => 
+        filterText === '' || stop.names[0].toLowerCase().includes(filterText.toLowerCase())
+    );
+    
+    if (!filtered.length) {
+        c.innerHTML = '<div class="no-route">No stops found</div>';
+        return;
+    }
+    
+    filtered.forEach((stop, displayIdx) => {
+        const actualIdx = stopsData.indexOf(stop);
+        const el = document.createElement('div');
+        el.className = 'stop-item' + (actualIdx === selectedStopIdx ? ' selected' : '');
+        el.innerHTML = `<div class="stop-name">${stop.names[0]}</div>
+            <div class="stop-coord">${stop.coordinates[0][0].toFixed(6)}, ${stop.coordinates[0][1].toFixed(6)}</div>`;
+        el.addEventListener('click', () => selectStop(actualIdx));
+        c.appendChild(el);
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Select stop
+// ═══════════════════════════════════════════════════════════
+function selectStop(index) {
+    selectedStopIdx = index;
+    document.querySelectorAll('.stop-item').forEach((el, i) => el.classList.toggle('selected', i === index));
+    document.getElementById('btnAddCoord').disabled = !(editMode && selectedStopIdx >= 0);
+    
+    // Show coordinates panel
+    if (index >= 0 && index < stopsData.length) {
+        const stop = stopsData[index];
+        document.getElementById('coordsPanelStopName').textContent = stop.names[0];
+        displayCoordinatesPanel(stop, index);
+        document.getElementById('coordsPanel').style.display = 'block';
+    } else {
+        document.getElementById('coordsPanel').style.display = 'none';
+    }
+}
+
+function displayCoordinatesPanel(stop, stopIdx) {
+    const list = document.getElementById('coordsList');
+    let html = '';
+    
+    stop.coordinates.forEach((coord, coordIdx) => {
+        if (deletedCoords.has(`${stop.id}_${coordIdx}`)) return; // skip deleted
+        
+        const isLast = coordIdx === stop.coordinates.length - 1;
+        const displayCoord = movedCoords[`${stop.id}_${coordIdx}`] || coord;
+        const isMoved = !!movedCoords[`${stop.id}_${coordIdx}`];
+        
+        html += `
+            <div class="coord-item ${isLast ? 'active' : ''}">
+                <div class="coord-value" title="${displayCoord[0].toFixed(8)}, ${displayCoord[1].toFixed(8)}">
+                    #${coordIdx + 1}: ${displayCoord[0].toFixed(5)}, ${displayCoord[1].toFixed(5)}
+                    ${isLast ? ' <strong style="color:#4caf50;">↓ Current</strong>' : ''}
+                    ${isMoved ? ' <span style="color:#e74c3c;font-weight:700;">●</span>' : ''}
+                </div>
+                <div class="coord-actions">
+                    <button class="coord-btn coord-btn-view" onclick="zoomToCoordinate(${displayCoord[0]}, ${displayCoord[1]})">🔍</button>
+                    ${stop.coordinates.length > 1 ? `<button class="coord-btn coord-btn-delete" onclick="deleteCoordinateFromPanel('${stop.id}', ${coordIdx}, ${stopIdx})">🗑️</button>` : ''}
+                    ${!isLast ? `<button class="coord-btn coord-btn-promote" onclick="promoteCoordinate('${stop.id}', ${coordIdx}, ${stopIdx})">↑</button>` : ''}
+                </div>
+            </div>
+        `;
+    });
+    
+    if (!html) {
+        html = '<div style="color:#999; font-size:11px;">No coordinates (deleted all)</div>';
+    }
+    
+    list.innerHTML = html;
+}
+
+function zoomToCoordinate(lat, lng) {
+    if (map) {
+        map.setView([lat, lng], 16);
+    }
+}
+
+function deleteCoordinateFromPanel(stopId, coordIdx, stopIdx) {
+    const stop = stopsData[stopIdx];
+    
+    if (stop.coordinates.length <= 1) {
+        showToast('⚠️ Cannot delete the last coordinate', true);
+        return;
+    }
+    
+    const coord = stop.coordinates[coordIdx];
+    if (confirm(`Delete coordinate #${coordIdx + 1}: ${coord[0].toFixed(4)}, ${coord[1].toFixed(4)}?`)) {
+        deletedCoords.add(`${stopId}_${coordIdx}`);
+        
+        // Remove related moved coords entry
+        delete movedCoords[`${stopId}_${coordIdx}`];
+        
+        markDirty();
+        updateStats();
+        renderAllMarkers(false);  // Don't zoom on updates
+        displayCoordinatesPanel(stop, stopIdx);
+        showToast('✅ Coordinate deleted');
+    }
+}
+
+function promoteCoordinate(stopId, coordIdx, stopIdx) {
+    const stop = stopsData[stopIdx];
+    const coord = stop.coordinates[coordIdx];
+    
+    // Move to end of array
+    stop.coordinates.splice(coordIdx, 1);
+    stop.coordinates.push(coord);
+    
+    // Update movedCoords entry key to new index
+    const movedValue = movedCoords[`${stopId}_${coordIdx}`];
+    delete movedCoords[`${stopId}_${coordIdx}`];
+    if (movedValue) {
+        movedCoords[`${stopId}_${stop.coordinates.length - 1}`] = movedValue;
+    }
+    
+    markDirty();
+    updateStats();
+    renderAllMarkers(false);  // Don't zoom on updates
+    displayCoordinatesPanel(stop, stopIdx);
+    showToast(`✅ Coordinate promoted to current`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Render markers
+// ═══════════════════════════════════════════════════════════
+function renderAllMarkers(shouldFitBounds = false) {
+    clearMarkers();
+    stopsData.forEach((stop, stopIdx) => {
+        const color = COLORS[stopIdx % COLORS.length];
+        stop.coordinates.forEach((coord, coordIdx) => {
+            if (deletedCoords.has(`${stop.id}_${coordIdx}`)) return; // skip deleted
+            const actualCoord = movedCoords[`${stop.id}_${coordIdx}`] || coord;
+            addStopMarker(stop, stopIdx, coordIdx, actualCoord, color);
+        });
+    });
+    newStops.forEach((stop, idx) => {
+        const color = '#1db954';
+        stop.coordinates.forEach((coord, coordIdx) => {
+            addNewStopMarker(stop, stopsData.length + idx, coordIdx, coord, color);
+        });
+    });
+    
+    // Only fit bounds on initial load, not on updates
+    if (shouldFitBounds && currentMarkers.length) {
+        map.fitBounds(new L.featureGroup(currentMarkers).getBounds().pad(0.1));
+    }
+    
+    // Refresh coordinates panel if a stop is selected
+    if (selectedStopIdx >= 0 && selectedStopIdx < stopsData.length) {
+        displayCoordinatesPanel(stopsData[selectedStopIdx], selectedStopIdx);
+    }
+}
+
+function makeStopIcon(color, draggable) {
+    return L.divIcon({
+        className: '',
+        html: `<div style="
+            width:18px;height:18px;
+            background:${color};border:2.5px solid #fff;border-radius:50%;
+            box-shadow:0 2px 6px rgba(0,0,0,.35);
+            cursor:${draggable ? 'grab' : 'pointer'};
+        "></div>`,
+        iconSize:[18,18], iconAnchor:[9,9]
+    });
+}
+
+function addStopMarker(stop, stopIdx, coordIdx, coord, color) {
+    const isMoved = !!movedCoords[`${stop.id}_${coordIdx}`];
+    const marker = L.marker([coord[0], coord[1]], {
+        icon: makeStopIcon(color, editMode),
+        draggable: editMode
+    }).addTo(map);
+
+    marker._stopId = stop.id;
+    marker._stopIndex = stopIdx;
+    marker._coordIndex = coordIdx;
+    marker._isNew = false;
+
+    marker.bindPopup(buildPopup(stop.names[0], coord[0], coord[1], isMoved, false, coordIdx, stop.coordinates.length));
+
+    marker.on('dragend', function(e) {
+        const ll = e.target.getLatLng();
+        const lat = parseFloat(ll.lat.toFixed(6));
+        const lng = parseFloat(ll.lng.toFixed(6));
+        movedCoords[`${stop.id}_${coordIdx}`] = [lat, lng];
+
+        marker.setIcon(makeStopIcon('#e74c3c', true));
+        marker.setPopupContent(buildPopup(stop.names[0], lat, lng, true, false, coordIdx, stop.coordinates.length));
+        markDirty();
+        updateStats();
+        
+        // Refresh coordinates panel if this stop is selected
+        if (selectedStopIdx === stopIdx) {
+            displayCoordinatesPanel(stop, stopIdx);
+        }
+    });
+
+    // Right-click to delete
+    marker.on('contextmenu', function(e) {
+        if (!editMode) return;
+        e.originalEvent.preventDefault();
+        if (confirm(`Delete coordinate ${coordIdx + 1} of ${stop.names[0]}?`)) {
+            deletedCoords.add(`${stop.id}_${coordIdx}`);
+            map.removeLayer(marker);
+            currentMarkers = currentMarkers.filter(m => m !== marker);
+            markDirty();
+            updateStats();
+            
+            // Refresh coordinates panel if this stop is selected
+            if (selectedStopIdx === stopIdx) {
+                displayCoordinatesPanel(stop, stopIdx);
+            }
+        }
+    });
+
+    // Click to select stop in sidebar
+    marker.on('click', function(e) {
+        selectStop(stopIdx);
+        marker.openPopup();
+    });
+
+    currentMarkers.push(marker);
+}
+
+function addNewStopMarker(stop, stopIdx, coordIdx, coord, color) {
+    const marker = L.marker([coord[0], coord[1]], {
+        icon: makeStopIcon(color, editMode),
+        draggable: editMode
+    }).addTo(map);
+
+    marker._stopId = 'new_' + stopIdx;
+    marker._stopIndex = stopIdx;
+    marker._coordIndex = coordIdx;
+    marker._isNew = true;
+
+    marker.bindPopup(buildPopup(stop.names[0], coord[0], coord[1], false, true, coordIdx, stop.coordinates.length));
+
+    marker.on('dragend', function(e) {
+        const ll = e.target.getLatLng();
+        const lat = parseFloat(ll.lat.toFixed(6));
+        const lng = parseFloat(ll.lng.toFixed(6));
+        stop.coordinates[coordIdx] = [lat, lng];
+
+        marker.setPopupContent(buildPopup(stop.names[0], lat, lng, false, true, coordIdx, stop.coordinates.length));
+        markDirty();
+    });
+
+    // Right-click to delete new coordinates
+    marker.on('contextmenu', function(e) {
+        if (!editMode) return;
+        e.originalEvent.preventDefault();
+        if (stop.coordinates.length > 1 && confirm(`Delete coordinate ${coordIdx + 1} of new stop ${stop.names[0]}?`)) {
+            stop.coordinates.splice(coordIdx, 1);
+            map.removeLayer(marker);
+            currentMarkers = currentMarkers.filter(m => m !== marker);
+            markDirty();
+            updateStats();
+        }
+    });
+
+    currentMarkers.push(marker);
+}
+
+function buildPopup(name, lat, lng, isMoved, isNew, coordIdx, totalCoords) {
+    return `<div style="padding:6px 8px;min-width:175px;font-family:'Segoe UI',sans-serif">
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">${name}</div>
+        <div style="color:#666;font-size:11px;margin-bottom:2px">Coordinate ${coordIdx + 1} of ${totalCoords}</div>
+        <div style="font-family:monospace;font-size:11px;color:#999;margin-top:2px">
+            ${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+        ${isMoved ? '<div style="color:#e74c3c;font-size:10px;margin-top:3px;font-weight:700">● Moved</div>' : ''}
+        ${isNew ? '<div style="color:#1db954;font-size:10px;margin-top:3px;font-weight:700">● New Stop</div>' : ''}
+        ${editMode ? '<div style="color:#667eea;font-size:10px;margin-top:2px">Drag to reposition • Right-click to delete</div>' : ''}
+    </div>`;
+}
+
+function clearMarkers() {
+    currentMarkers.forEach(m => map?.removeLayer(m));
+    currentMarkers = [];
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Edit mode
+// ═══════════════════════════════════════════════════════════
+function setEditMode(on) {
+    editMode = on;
+    const btn = document.getElementById('btnEdit');
+    btn.textContent = on ? '🔒 Stop Editing' : 'Enable Edit';
+    btn.classList.toggle('on', on);
+    document.getElementById('map').classList.toggle('edit-on', on);
+
+    currentMarkers.forEach(m => {
+        const isMoved = !!movedCoords[`${m._stopId}_${m._coordIndex}`] || m._isNew;
+        const baseColor = m._isNew ? '#1db954' : COLORS[m._stopIndex % COLORS.length];
+        const color = isMoved ? '#e74c3c' : baseColor;
+        m.setIcon(makeStopIcon(color, on));
+        if (on) m.dragging.enable();
+        else    m.dragging.disable();
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Add new stop mode
+// ═══════════════════════════════════════════════════════════
+function setAddMode(on) {
+    addMode = on;
+    const btn = document.getElementById('btnAdd');
+    btn.textContent = on ? 'Cancel Add Stop' : 'Add New Stop';
+    btn.classList.toggle('on', on);
+    document.getElementById('map').classList.toggle('edit-on', on);
+    if (!on) {
+        document.getElementById('coordBadge').classList.remove('show');
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Add coordinate mode
+// ═══════════════════════════════════════════════════════════
+function setAddCoordMode(on) {
+    if (selectedStopIdx < 0) {
+        showToast('Select a stoppage first', true);
+        return;
+    }
+    addMode = on;
+    const btn = document.getElementById('btnAddCoord');
+    btn.textContent = on ? 'Cancel Add Coord' : 'Add Coordinate';
+    btn.classList.toggle('on', on);
+    document.getElementById('coordAddBtn').style.display = on ? 'inline-block' : 'none';
+    if (!on) {
+        document.getElementById('coordBadge').classList.remove('show');
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Add new stop
+// ═══════════════════════════════════════════════════════════
+function addNewStop(lat, lng) {
+    const name = prompt('Enter stop name:', 'New Stop');
+    if (!name) return;
+    const newStop = {
+        id: Date.now(), // temporary id
+        names: [name],
+        coordinates: [[parseFloat(lat), parseFloat(lng)]]
+    };
+    newStops.push(newStop);
+    addNewStopMarker(newStop, stopsData.length + newStops.length - 1, 0, [lat, lng], '#1db954');
+    markDirty();
+    updateStats();
+    displayStops(); // refresh list
+    showToast('✅ New stop added');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Toolbar helpers
+// ═══════════════════════════════════════════════════════════
+function enableToolbar(on) {
+    document.getElementById('btnEdit').disabled = !on;
+    document.getElementById('btnAdd').disabled = !on;
+    document.getElementById('btnAddCoord').disabled = !(on && selectedStopIdx >= 0);
+    const dirty = Object.keys(movedCoords).length > 0 || newStops.length > 0 || deletedCoords.size > 0;
+    document.getElementById('btnSave').disabled = !(on && dirty);
+    document.getElementById('btnDl').disabled = !(on && dirty);
+}
+
+function markDirty() {
+    document.getElementById('unsavedDot').classList.add('on');
+    document.getElementById('btnSave').disabled = false;
+    document.getElementById('btnDl').disabled = false;
+}
+function markSaved() {
+    document.getElementById('unsavedDot').classList.remove('on');
+    movedCoords = {};
+    newStops = [];
+    deletedCoords.clear();
+    selectedStopIdx = -1;
+    document.getElementById('coordsPanel').style.display = 'none';
+    updateStats();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Stats
+// ═══════════════════════════════════════════════════════════
+function updateStats() {
+    let totalCoords = 0;
+    stopsData.forEach(stop => {
+        stop.coordinates.forEach((_, idx) => {
+            if (!deletedCoords.has(`${stop.id}_${idx}`)) totalCoords++;
+        });
+    });
+    newStops.forEach(stop => totalCoords += stop.coordinates.length);
+
+    const movedCount = Object.keys(movedCoords).length;
+    const deletedCount = deletedCoords.size;
+    const newCount = newStops.reduce((sum, stop) => sum + stop.coordinates.length, 0);
+
+    document.getElementById('totalStops').textContent = `Total: ${totalCoords} coords`;
+    document.getElementById('movedStops').textContent = `Moved: ${movedCount}`;
+    document.getElementById('newStops').textContent = `New: ${newCount} | Del: ${deletedCount}`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Build updated final_safe.json
+// ═══════════════════════════════════════════════════════════
+function buildUpdatedJSON() {
+    const out = JSON.parse(JSON.stringify(stopsData));
+    // Update moved coordinates and handle deletions
+    out.forEach(stop => {
+        const newCoords = [];
+        stop.coordinates.forEach((coord, idx) => {
+            if (deletedCoords.has(`${stop.id}_${idx}`)) return; // skip deleted
+            const moved = movedCoords[`${stop.id}_${idx}`];
+            newCoords.push(moved || coord);
+        });
+        stop.coordinates = newCoords;
+    });
+    // Add new stops
+    newStops.forEach(stop => {
+        out.push({
+            id: out.length + 1, // assign proper id
+            names: stop.names,
+            coordinates: stop.coordinates
+        });
+    });
+    return out;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Save to server via WebSocket
+// ═══════════════════════════════════════════════════════════
+function saveToServer() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        showToast('⚠️ Not connected — use Download instead.', true);
+        return;
+    }
+    ws.send(JSON.stringify({
+        type: 'save_file',
+        filename: 'final_safe.json',
+        content: JSON.stringify(buildUpdatedJSON(), null, 2)
+    }));
+    showToast('📤 Sending to server…');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Download final_safe.json
+// ═══════════════════════════════════════════════════════════
+function downloadJSON() {
+    const blob = new Blob([JSON.stringify(buildUpdatedJSON(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'final_safe.json'; a.click();
+    URL.revokeObjectURL(url);
+    showToast('⬇️ Downloaded final_safe.json');
+    markSaved();
+
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Keyboard shortcuts
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+    // Escape: Cancel current mode
+    if (e.key === 'Escape') {
+        if (addMode) setAddMode(false);
+        if (addCoordMode) setAddCoordMode(false);
+        if (editMode) setEditMode(false);
+        document.getElementById('coordBadge').classList.remove('show');
+    }
+    
+    // Enter: Confirm coordinate addition if badge is showing
+    if (e.key === 'Enter' && document.getElementById('coordBadge').classList.contains('show')) {
+        if (addMode || addCoordMode) {
+            const btn = document.getElementById('coordAddBtn');
+            if (!btn.disabled) {
+                btn.click();
+            }
+        }
+    }
+});
+
+// ═══════════════════════════════════════════════════════════
+//  Search/Filter stops
+// ═══════════════════════════════════════════════════════════
+document.getElementById('searchStops').addEventListener('input', (e) => {
+    displayStops(e.target.value);
+});
+
+// ═══════════════════════════════════════════════════════════
+//  Button wiring
+// ═══════════════════════════════════════════════════════════
+document.getElementById('btnEdit').addEventListener('click', () => {
+    if (addMode) setAddMode(false);
+    if (addCoordMode) setAddCoordMode(false);
+    setEditMode(!editMode);
+    enableToolbar(true);
+});
+document.getElementById('btnAdd').addEventListener('click', () => {
+    if (editMode) setEditMode(false);
+    if (addCoordMode) setAddCoordMode(false);
+    setAddMode(!addMode);
+    enableToolbar(true);
+});
+document.getElementById('btnAddCoord').addEventListener('click', () => {
+    if (editMode) setEditMode(false);
+    if (addMode) setAddMode(false);
+    setAddCoordMode(!addCoordMode);
+    enableToolbar(true);
+});
+document.getElementById('btnSave').addEventListener('click', saveToServer);
+document.getElementById('btnDl').addEventListener('click', downloadJSON);
+
+document.getElementById('coordAddBtn').addEventListener('click', function() {
+    const val = document.getElementById('coordCopyBtn').dataset.value;
+    const [latStr, lngStr] = val.split(', ');
+    const lat = parseFloat(latStr);
+    const lng = parseFloat(lngStr);
+    
+    // Validate coordinates
+    if (isNaN(lat) || isNaN(lng)) {
+        showToast('⚠️ Invalid coordinates', true);
+        return;
+    }
+    
+    if (selectedStopIdx >= 0 && selectedStopIdx < stopsData.length) {
+        // Add coordinate to existing stoppage
+        const stop = stopsData[selectedStopIdx];
+        
+        // Check for duplicates with tolerance (0.000001 degrees ≈ 0.1m)
+        const isDuplicate = stop.coordinates.some(coord => 
+            Math.abs(coord[0] - lat) < 0.000001 && Math.abs(coord[1] - lng) < 0.000001
+        );
+        
+        if (isDuplicate) {
+            showToast(`⚠️ Coordinate already exists for ${stop.names[0]}`, true);
+            document.getElementById('coordBadge').classList.remove('show');
+            setAddCoordMode(false);
+            return;
+        }
+        
+        const newCoord = [lat, lng];
+        stop.coordinates.push(newCoord);
+        const coordIdx = stop.coordinates.length - 1;
+        const color = COLORS[selectedStopIdx % COLORS.length];
+        
+        // Add single marker instead of re-rendering all
+        addStopMarker(stop, selectedStopIdx, coordIdx, newCoord, color);
+        
+        markDirty();
+        updateStats();
+        
+        // Only refresh panel, not all markers
+        displayCoordinatesPanel(stop, selectedStopIdx);
+        showToast(`✅ Added coordinate to ${stop.names[0]}`);
+    } else {
+        // Add new stoppage
+        addNewStop(lat, lng);
+    }
+    
+    document.getElementById('coordBadge').classList.remove('show');
+    setAddMode(false);
+    setAddCoordMode(false);
+});
+
+// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+//  Boot
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('load', async () => {
+    initMap();
+    await loadData();
+    enableToolbar(true);
+    connectWS();
+});
+</script>
+</body>
+</html>
